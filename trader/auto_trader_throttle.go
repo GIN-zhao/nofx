@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"nofx/kernel"
+	"nofx/logger"
 	"nofx/market"
 	"nofx/store"
 	"strings"
@@ -106,26 +107,19 @@ func (at *AutoTrader) openThrottleReason(decision kernel.Decision, ctx *kernel.C
 		return fmt.Sprintf("trade throttle: %s already has an open %s position; manage or close it before opening another side", symbol, pos.Side)
 	}
 
-	if !at.usesVergexSignalPolicy() {
-		if order := at.findRecentCloseOrder(symbol, time.Now().Add(-autopilotReentryCooldown)); order != nil {
-			age := time.Since(time.UnixMilli(order.CreatedAt))
-			remaining := autopilotReentryCooldown - age
-			if remaining < 0 {
-				remaining = 0
-			}
-			return fmt.Sprintf("trade throttle: %s was closed %s ago; wait %s before re-entry", symbol, roundDuration(age), roundDuration(remaining))
+	if order := at.findRecentCloseOrder(symbol, time.Now().Add(-autopilotReentryCooldown)); order != nil {
+		age := time.Since(time.UnixMilli(order.CreatedAt))
+		remaining := autopilotReentryCooldown - age
+		if remaining < 0 {
+			remaining = 0
 		}
+		return fmt.Sprintf("trade throttle: %s was closed %s ago; wait %s before re-entry", symbol, roundDuration(age), roundDuration(remaining))
 	}
 
 	return ""
 }
 
 func (at *AutoTrader) closeThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
-	// Vergex positions are closed by the direction state machine. A changed or
-	// vanished board signal must exit immediately, independent of hold duration.
-	if at.usesVergexSignalPolicy() {
-		return ""
-	}
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	side := closeActionSide(decision.Action)
 	if symbol == "" || side == "" {
@@ -225,7 +219,7 @@ func (at *AutoTrader) recentOrders(limit int) ([]*store.TraderOrder, error) {
 func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *store.TraderOrder {
 	orders, err := at.recentOrders(100)
 	if err != nil {
-		at.logWarnf("⚠️ Trade throttle could not read recent close orders: %v", err)
+		logger.Warnf("⚠️ Trade throttle could not read recent close orders: %v", err)
 		return nil
 	}
 	sinceMs := since.UTC().UnixMilli()
@@ -243,7 +237,7 @@ func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *stor
 func (at *AutoTrader) findRecentOpenOrder(symbol string, side string, since time.Time) *store.TraderOrder {
 	orders, err := at.recentOrders(100)
 	if err != nil {
-		at.logWarnf("⚠️ Trade throttle could not read recent open orders: %v", err)
+		logger.Warnf("⚠️ Trade throttle could not read recent open orders: %v", err)
 		return nil
 	}
 	sinceMs := since.UTC().UnixMilli()

@@ -3,16 +3,15 @@ package kernel
 import (
 	"fmt"
 	"nofx/logger"
-	"nofx/market"
 )
 
 // ============================================================================
 // Decision Validation
 // ============================================================================
 
-func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, signalManagedExit bool) error {
+func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
 	for i := range decisions {
-		if err := validateDecisionForMode(&decisions[i], accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio, signalManagedExit); err != nil {
+		if err := validateDecisionForMode(&decisions[i], accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio); err != nil {
 			return fmt.Errorf("decision #%d validation failed: %w", i+1, err)
 		}
 	}
@@ -20,10 +19,10 @@ func validateDecisions(decisions []Decision, accountEquity float64, btcEthLevera
 }
 
 func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
-	return validateDecisionForMode(d, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio, false)
+	return validateDecisionForMode(d, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio)
 }
 
-func validateDecisionForMode(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, signalManagedExit bool) error {
+func validateDecisionForMode(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
 	validActions := map[string]bool{
 		"open_long":   true,
 		"open_short":  true,
@@ -40,15 +39,11 @@ func validateDecisionForMode(d *Decision, accountEquity float64, btcEthLeverage,
 	if d.Action == "open_long" || d.Action == "open_short" {
 		// Asset tiering for validation:
 		//   - BTC/ETH crypto perps use the BTC/ETH tier (typically 5x equity).
-		//   - Hyperliquid XYZ assets (US equities, commodities, forex) are
-		//     also treated as the higher tier — they are not crypto altcoins
-		//     and the user's quick-trade flow shows them at the higher cap,
-		//     so the validator must match.
 		//   - Everything else is altcoin (1x equity by default).
 		maxLeverage := altcoinLeverage
 		posRatio := altcoinPosRatio
 		maxPositionValue := accountEquity * posRatio
-		isMajor := d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" || market.IsXyzDexAsset(d.Symbol)
+		isMajor := d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT"
 		if isMajor {
 			maxLeverage = btcEthLeverage
 			posRatio = btcEthPosRatio
@@ -82,23 +77,13 @@ func validateDecisionForMode(d *Decision, accountEquity float64, btcEthLeverage,
 
 		tolerance := maxPositionValue * 0.01
 		if d.PositionSizeUSD > maxPositionValue+tolerance {
-			switch {
-			case d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT":
+			if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
 				return fmt.Errorf("BTC/ETH single coin position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", maxPositionValue, posRatio, d.PositionSizeUSD)
-			case market.IsXyzDexAsset(d.Symbol):
-				return fmt.Errorf("%s position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", d.Symbol, maxPositionValue, posRatio, d.PositionSizeUSD)
-			default:
-				return fmt.Errorf("altcoin single coin position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", maxPositionValue, posRatio, d.PositionSizeUSD)
 			}
+			return fmt.Errorf("altcoin single coin position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", maxPositionValue, posRatio, d.PositionSizeUSD)
 		}
 		if d.StopLoss <= 0 {
 			return fmt.Errorf("stop loss must be greater than 0")
-		}
-		if signalManagedExit {
-			if d.TakeProfit != 0 {
-				return fmt.Errorf("take profit must be 0 when exits are signal-managed")
-			}
-			return nil
 		}
 		if d.TakeProfit <= 0 {
 			return fmt.Errorf("stop loss and take profit must be greater than 0")

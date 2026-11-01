@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -153,16 +154,77 @@ func ValidateURL(rawURL string) error {
 	return nil
 }
 
+// ProxyURL returns the outbound proxy configured via the PROXY_URL environment
+// variable (e.g. http://127.0.0.1:7897), or nil when unset or invalid.
+func ProxyURL() *url.URL {
+	v := strings.TrimSpace(os.Getenv("PROXY_URL"))
+	if v == "" {
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return u
+}
+
+// ProxyFunc returns a transport proxy function honouring NO_PROXY: a
+// comma-separated list of hostnames that must bypass PROXY_URL (standard
+// semantics: "bigmodel.cn" matches the host and its subdomains, ".cn" matches
+// suffixes, "*" bypasses everything). Returns nil when no proxy is configured.
+func ProxyFunc() func(*http.Request) (*url.URL, error) {
+	proxy := ProxyURL()
+	if proxy == nil {
+		return nil
+	}
+	var rules []string
+	for _, entry := range strings.Split(os.Getenv("NO_PROXY"), ",") {
+		if entry = strings.ToLower(strings.TrimSpace(entry)); entry != "" {
+			rules = append(rules, entry)
+		}
+	}
+	if len(rules) == 0 {
+		return http.ProxyURL(proxy)
+	}
+	return func(req *http.Request) (*url.URL, error) {
+		if hostBypassesProxy(req.URL.Hostname(), rules) {
+			return nil, nil
+		}
+		return proxy, nil
+	}
+}
+
+func hostBypassesProxy(host string, rules []string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, rule := range rules {
+		if rule == "*" {
+			return true
+		}
+		rule = strings.TrimPrefix(rule, ".")
+		if host == rule || strings.HasSuffix(host, "."+rule) {
+			return true
+		}
+	}
+	return false
+}
+
 // SafeHTTPClient returns an HTTP client with SSRF protection
-// It validates URLs and blocks requests to private networks
+// It validates URLs and blocks requests to private networks.
+// When PROXY_URL is set, requests are dialed through the proxy instead; the
+// hostname then resolves at the proxy, so the direct-dial IP check is skipped.
+// Hosts listed in NO_PROXY bypass the proxy (and go through the SSRF check).
 func SafeHTTPClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   timeout,
 		KeepAlive: 30 * time.Second,
 	}
 
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	transport := &http.Transport{}
+	if proxy := ProxyURL(); proxy != nil {
+		transport.Proxy = ProxyFunc()
+		transport.DialContext = dialer.DialContext
+	} else {
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// Extract host from address
 			host, _, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -182,7 +244,7 @@ func SafeHTTPClient(timeout time.Duration) *http.Client {
 			}
 
 			return dialer.DialContext(ctx, network, addr)
-		},
+		}
 	}
 
 	return &http.Client{

@@ -1,191 +1,159 @@
 package main
 
 import (
-	"nofx/api"
-	"nofx/auth"
-	"nofx/config"
-	"nofx/crypto"
-	"nofx/logger"
-	"nofx/manager"
-	_ "nofx/mcp/payment"
-	_ "nofx/mcp/provider"
-	"nofx/store"
-	"nofx/telemetry"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
-	"github.com/google/uuid"
+	"nofx/config"
+	"nofx/logger"
+	"nofx/mcp"
+	"nofx/notify"
+	"nofx/security"
+	"nofx/store"
+	"nofx/trader"
+	"nofx/trader/paper"
+
+	// Register protocol-specific providers (claude = Anthropic Messages API, …)
+	_ "nofx/mcp/provider"
+
 	"github.com/joho/godotenv"
 )
 
-func main() {
-	// Local admin subcommands (account recovery) run directly against the
-	// database and never start the HTTP server. Recovery therefore requires
-	// shell/file access to the host instead of a network request, which keeps
-	// it safe even when NOFX is exposed to the public internet. See cli.go.
-	if runCLISubcommand(os.Args[1:]) {
-		return
-	}
+const paperTraderID = "paper"
 
+func main() {
 	// Load .env environment variables
 	_ = godotenv.Load()
+
+	// Outbound proxy (PROXY_URL, NO_PROXY) for OKX market data and Telegram
+	// push. The AI (mcp) client picks it up via security.SafeHTTPClient.
+	if f := security.ProxyFunc(); f != nil {
+		if t, ok := http.DefaultTransport.(*http.Transport); ok {
+			t.Proxy = f
+		}
+	}
 
 	// Initialize logger
 	logger.Init(nil)
 
 	logger.Info("╔════════════════════════════════════════════════════════════╗")
-	logger.Info("║           🚀 NOFX - AI-Powered Trading System              ║")
+	logger.Info("║   🚀 NOFX - OKX 行情 + AI 决策 + 本地模拟交易 + Telegram     ║")
 	logger.Info("╚════════════════════════════════════════════════════════════╝")
 
-	// Initialize global configuration (loaded from .env).
-	// MustInit refuses to start under an insecure config (e.g. missing or default JWT_SECRET).
 	config.MustInit()
 	cfg := config.Get()
 	logger.Info("✅ Configuration loaded")
 
-	// Initialize encryption service BEFORE database (so EncryptedString can decrypt on read)
-	logger.Info("🔐 Initializing encryption service...")
-	cryptoService, err := crypto.NewCryptoService()
-	if err != nil {
-		logger.Fatalf("❌ Failed to initialize encryption service: %v", err)
-	}
-	crypto.SetGlobalCryptoService(cryptoService)
-	logger.Info("✅ Encryption service initialized successfully")
-
-	// Initialize database from configuration
-	// For backward compatibility: command line arg overrides config (SQLite only)
-	if len(os.Args) > 1 {
-		cfg.DBPath = os.Args[1]
-	}
-	// Ensure data directory exists (for SQLite)
-	if cfg.DBType == "sqlite" {
-		if dir := filepath.Dir(cfg.DBPath); dir != "." {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				logger.Errorf("Failed to create data directory: %v", err)
-			}
+	// Ensure the SQLite data directory exists
+	if dir := filepath.Dir(cfg.DBPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			logger.Warnf("Failed to create data directory: %v", err)
 		}
 	}
 
-	logger.Infof("📋 Initializing database (%s)...", cfg.DBType)
-	dbType := store.DBTypeSQLite
-	if cfg.DBType == "postgres" {
-		dbType = store.DBTypePostgres
-	}
-	st, err := store.NewWithConfig(store.DBConfig{
-		Type:     dbType,
-		Path:     cfg.DBPath,
-		Host:     cfg.DBHost,
-		Port:     cfg.DBPort,
-		User:     cfg.DBUser,
-		Password: cfg.DBPassword,
-		DBName:   cfg.DBName,
-		SSLMode:  cfg.DBSSLMode,
-	})
+	st, err := store.New(cfg.DBPath)
 	if err != nil {
 		logger.Fatalf("❌ Failed to initialize database: %v", err)
 	}
 	defer st.Close()
+	logger.Info("✅ Database initialized")
 
-	// Initialize installation ID for experience improvement (anonymous statistics)
-	initInstallationID(st)
-
-	// Set JWT secret
-	auth.SetJWTSecret(cfg.JWTSecret)
-	logger.Info("🔑 JWT secret configured")
-
-	// WebSocket market monitor is NO LONGER USED
-	// All K-line data now comes from CoinAnk API instead of Binance WebSocket cache
-	// Commented out to reduce unnecessary connections:
-	// go market.NewWSMonitor(150).Start(nil)
-	// logger.Info("📊 WebSocket market monitor started")
-	// time.Sleep(500 * time.Millisecond)
-	logger.Info("📊 Using CoinAnk API for all market data (WebSocket cache disabled)")
-
-	// Create TraderManager
-	traderManager := manager.NewTraderManager()
-
-	// Load all traders from database to memory (may auto-start traders with IsRunning=true)
-	if err := traderManager.LoadTradersFromStore(st); err != nil {
-		logger.Fatalf("❌ Failed to load traders: %v", err)
-	}
-
-	// Display loaded trader information
-	traders, err := st.Trader().List("default")
+	// Ensure the single paper trader row exists (initial balance from config)
+	traderRow, err := ensurePaperTrader(st, cfg.InitialBalance)
 	if err != nil {
-		logger.Fatalf("❌ Failed to get trader list: %v", err)
+		logger.Fatalf("❌ Failed to prepare paper trader: %v", err)
 	}
+	logger.Infof("✅ Paper trader ready: initial balance %.2f USDT", traderRow.InitialBalance)
 
-	logger.Info("🤖 AI Trader Configurations in Database:")
-	if len(traders) == 0 {
-		logger.Info("  (No trader configurations, please create via Web interface)")
-	} else {
-		for _, t := range traders {
-			status := "❌ Stopped"
-			if t.IsRunning {
-				status = "✅ Running"
-			}
-			idShort := t.ID
-			if len(idShort) > 8 {
-				idShort = idShort[:8]
-			}
-			logger.Infof("  • %s [%s] %s - AI Model: %s, Exchange: %s",
-				t.Name, idShort, status, t.AIModelID, t.ExchangeID)
+	// Strategy: prefer the stored default strategy, else the built-in default.
+	strategy := store.GetDefaultStrategyConfig("en")
+	if s, err := st.Strategy().GetDefault(); err == nil && s != nil {
+		if parsed, err := s.ParseConfig(); err == nil {
+			strategy = *parsed
 		}
 	}
+	strategy.ClampLimits()
 
-	// Start API server
-	server := api.NewServer(traderManager, st, cryptoService, cfg.APIServerPort)
+	// AI client — registered providers use their protocol-specific client
+	// (e.g. claude = Anthropic Messages API); unknown providers fall back to
+	// the generic OpenAI-compatible client.
+	aiOpts := []mcp.ClientOption{
+		mcp.WithProvider(cfg.AIProvider),
+		mcp.WithAPIKey(cfg.AIAPIKey),
+		mcp.WithModel(cfg.AIModel),
+		mcp.WithBaseURL(cfg.AIBaseURL),
+	}
+	aiClient := mcp.NewAIClientByProvider(cfg.AIProvider, aiOpts...)
+	if aiClient == nil {
+		aiClient = mcp.NewClient(aiOpts...)
+	}
+	logger.Infof("✅ AI client ready: provider=%s model=%s", cfg.AIProvider, cfg.AIModel)
 
-	go func() {
-		if err := server.Start(); err != nil {
-			logger.Fatalf("❌ Failed to start API server: %v", err)
-		}
-	}()
+	// Paper broker + Telegram notifier + auto trader
+	broker := paper.New(st, paperTraderID)
+	notifier := notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID)
+	if !notifier.Enabled() {
+		logger.Warnf("⚠️ TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — notifications disabled")
+	}
 
-	// Wait for interrupt signal
+	autoTrader := trader.NewAutoTrader(trader.Config{
+		TraderID:     paperTraderID,
+		Store:        st,
+		Strategy:     &strategy,
+		ScanInterval: time.Duration(cfg.ScanInterval) * time.Second,
+		Notifier:     notifier,
+		AIClient:     aiClient,
+	}, broker)
+	if err := autoTrader.Start(); err != nil {
+		logger.Fatalf("❌ Failed to start auto trader: %v", err)
+	}
+
+	// Telegram two-way: listen for commands/questions from the configured chat.
+	if notifier.Enabled() {
+		go notifier.PollMessages(autoTrader.HandleTelegramMessage)
+		logger.Info("✅ Telegram 指令监听已启动 (发送 /help 查看可用指令)")
+	}
+
+	logger.Info("✅ System started, waiting for shutdown signal (Ctrl+C to stop)")
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	logger.Info("✅ System started successfully, waiting for trading commands...")
-	logger.Info("📌 Tip: Use Ctrl+C to stop the system")
-
 	<-quit
-	logger.Info("📴 Shutdown signal received, closing system...")
 
-	if err := server.Shutdown(); err != nil {
-		logger.Warnf("⚠️ HTTP server shutdown error: %v", err)
-	}
-	logger.Info("✅ HTTP server stopped")
-
-	// nofxiAgent.Stop() is handled by defer above
-
-	// Stop all traders
-	traderManager.StopAll()
+	logger.Info("📴 Shutdown signal received, stopping...")
+	autoTrader.Stop()
 	logger.Info("✅ System shut down safely")
 }
 
-// initInstallationID initializes the anonymous installation ID for experience improvement
-// This ID is persisted in database and used for anonymous usage statistics
-func initInstallationID(st *store.Store) {
-	const key = "installation_id"
-
-	// Try to load from database
-	installationID, err := st.GetSystemConfig(key)
-	if err != nil {
-		logger.Warnf("⚠️ Failed to load installation ID: %v", err)
-	}
-
-	// Generate new ID if not exists
-	if installationID == "" {
-		installationID = uuid.New().String()
-		if err := st.SetSystemConfig(key, installationID); err != nil {
-			logger.Warnf("⚠️ Failed to save installation ID: %v", err)
+// ensurePaperTrader creates or repairs the single paper trader row.
+func ensurePaperTrader(st *store.Store, initialBalance float64) (*store.Trader, error) {
+	row, err := st.Trader().GetByID(paperTraderID)
+	if err == nil && row != nil {
+		if row.InitialBalance <= 0 {
+			row.InitialBalance = initialBalance
+			if err := st.Trader().UpdateInitialBalance(paperTraderID, initialBalance); err != nil {
+				return nil, err
+			}
+			row.InitialBalance = initialBalance
 		}
-		logger.Infof("📊 Generated new installation ID: %s", installationID[:8]+"...")
+		return row, nil
 	}
 
-	// Set installation ID in experience module
-	telemetry.SetInstallationID(installationID)
+	row = &store.Trader{
+		ID:                  paperTraderID,
+		Name:                "OKX 模拟交易",
+		InitialBalance:      initialBalance,
+		ScanIntervalMinutes: 5,
+		IsRunning:           true,
+		IsCrossMargin:       true,
+	}
+	if err := st.Trader().Create(row); err != nil {
+		return nil, fmt.Errorf("create paper trader: %w", err)
+	}
+	return row, nil
 }

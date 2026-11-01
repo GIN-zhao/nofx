@@ -104,9 +104,9 @@ func TestGetEffectiveCoinCount(t *testing.T) {
 		t.Errorf("static coin count = %d, want 2", got)
 	}
 
-	config.CoinSource.SourceType = "ai500"
-	config.CoinSource.AI500Limit = 5
-	if got := config.getEffectiveCoinCount(); got != 5 {
-		t.Errorf("ai500 coin count = %d, want 5", got)
+	// An empty list falls back to the default 3-coin universe.
+	config.CoinSource.StaticCoins = nil
+	if got := config.getEffectiveCoinCount(); got != 3 {
+		t.Errorf("default coin count = %d, want 3", got)
 	}
 }

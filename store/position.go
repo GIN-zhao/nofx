@@ -113,6 +113,8 @@ type TraderPosition struct {
 	RealizedPnL        float64 `gorm:"column:realized_pnl;default:0" json:"realized_pnl"`
 	Fee                float64 `gorm:"column:fee;default:0" json:"fee"`
 	Leverage           int     `gorm:"column:leverage;default:1" json:"leverage"`
+	StopLoss           float64 `gorm:"column:stop_loss;default:0" json:"stop_loss"`     // 0 = not set
+	TakeProfit         float64 `gorm:"column:take_profit;default:0" json:"take_profit"` // 0 = not set
 	Status             string  `gorm:"column:status;default:OPEN;index:idx_positions_status" json:"status"`
 	CloseReason        string  `gorm:"column:close_reason;default:''" json:"close_reason"`
 	Source             string  `gorm:"column:source;default:system" json:"source"`
@@ -294,6 +296,17 @@ func (s *PositionStore) UpdatePositionExchangeInfo(id int64, exchangeID, exchang
 		"exchange_id":   exchangeID,
 		"exchange_type": exchangeType,
 		"updated_at":    nowMs,
+	}).Error
+}
+
+// UpdateProtectionLevels updates the stop-loss/take-profit prices on an open
+// position (0 = cleared).
+func (s *PositionStore) UpdateProtectionLevels(id int64, stopLoss, takeProfit float64) error {
+	nowMs := time.Now().UTC().UnixMilli()
+	return s.db.Model(&TraderPosition{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"stop_loss":  stopLoss,
+		"take_profit": takeProfit,
+		"updated_at": nowMs,
 	}).Error
 }
 

@@ -1,296 +1,65 @@
-<p align="center">
-  <img src="docs/assets/nofx-banner.svg" alt="nofx — Intelligence that trades. An open trading system you run yourself." width="100%"/>
-</p>
+# NOFX — OKX 行情 + AI 决策 + 本地模拟交易 + Telegram 推送
 
-<p align="center">
-  <a href="#frontier">Frontier</a> ·
-  <a href="#run-locally">Get started</a> ·
-  <a href="#documentation">Documentation</a> ·
-  <a href="#community">Community</a>
-</p>
+精简版 NOFX：只用 OKX 公开行情（无需交易所 API key），由大模型做交易决策，在本地 SQLite 账本上模拟交易，并通过 Telegram bot 推送每笔交易的详细信息。
 
-<p align="center">
-  <a href="https://github.com/NoFxAiOS/nofx/stargazers"><img src="https://img.shields.io/github/stars/NoFxAiOS/nofx?style=flat&labelColor=192434&color=295BE8" alt="GitHub stars"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-295BE8?style=flat&labelColor=192434" alt="License: AGPL-3.0"></a>
-  <a href="https://t.me/nofx_dev_community"><img src="https://img.shields.io/badge/telegram-community-295BE8?style=flat&labelColor=192434&logo=telegram&logoColor=white" alt="Telegram community"></a>
-</p>
+已移除：钱包/交易所实盘连接、Web 前端、多交易所适配、网格策略等冗余模块。
 
-<p align="center">
-  <a href="README.md">English</a> ·
-  <a href="docs/i18n/zh-CN/README.md">中文</a> ·
-  <a href="docs/i18n/ja/README.md">日本語</a> ·
-  <a href="docs/i18n/ko/README.md">한국어</a> ·
-  <a href="docs/i18n/ru/README.md">Русский</a> ·
-  <a href="docs/i18n/uk/README.md">Українська</a> ·
-  <a href="docs/i18n/vi/README.md">Tiếng Việt</a>
-</p>
+## 功能
 
-NOFX is an open-source trading system you run on your own machine. Use **Frontier** to work through a trade with AI, compare entries on a chart and approve the order yourself. Use **Autopilot** to run a strategy continuously. Both use your configured models and exchange accounts.
+- **OKX 实时行情**：USDT 永续合约 K 线（多周期）、EMA/MACD/RSI/ATR/BOLL、持仓量、资金费率，全部来自 OKX v5 公开 REST。
+- **AI 决策**：将行情 + 账户 + 持仓 + 历史交易统计组装进 prompt，由配置的 LLM 输出结构化决策（开多/开空/平仓/持有，含止损、止盈、杠杆、仓位大小、信心度）。
+- **本地模拟交易**：SQLite 账本（trader/positions/orders/equity 表），市价即时成交，0.05% taker 手续费，强制止损/止盈，按 `1/杠杆` 估算爆仓价，重启后账本自动恢复。
+- **Telegram 推送**：开仓/平仓消息包含策略、币种现价与 1h/4h 涨跌（市场走向）、本金（保证金）、杠杆、仓位价值、止损止盈、信心度和 AI 分析；触发止损/止盈/爆仓也会推送。连续 3 次周期失败自动进入安全模式并推送告警。
+- **Telegram 双向指令**：直接给 bot 发消息即可查询和控制（仅限配置的 chat）：`/status` 账户总览、`/positions` 持仓明细、`/trades` 最近平仓、`/pause` 暂停开仓、`/resume` 恢复开仓、`/help` 帮助；发任意问题 AI 会结合当前账户与持仓状态回答。
+- **风控兜底**：最大持仓数、BTC/ETH 与山寨币仓位占比上限、最小仓位金额、SL/TP 价格合法性校验（方向错误立即拒绝开仓）。
 
-Built with [Vergex](https://vergex.trade). AI and data access through [Claw402](https://claw402.ai).
-
-## Run locally
-
-**One-line install — Linux / macOS**
-
-Install and start Docker with Compose, then run:
+## 快速开始
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NoFxAiOS/nofx/main/install.sh | bash
-```
-
-Open **http://127.0.0.1:3000** in your desktop browser.
-
-The installer generates missing environment keys and starts NOFX using published Docker images. No Go or Node.js setup is needed. Continue with [your first session](#your-first-session), or see [source builds and other options](#source-builds-and-other-options).
-
-## Frontier
-
-A chart, a conversation and a trade you can inspect before placing it.
-
-1. **Choose a market.** Browse top-volume instruments, search native exchange symbols or use the Binance AI500 list. Stock-linked markets appear where supported by the venue.
-2. **Compare ways to enter.** Request market, limit, weighted ladder and TWAP plans. See entry prices, stop loss, targets, leverage, position value and estimated margin together.
-3. **Review and trade.** Select a plan to focus the chart. Review the current account and order details, then explicitly approve execution.
-4. **Manage the position.** Check live positions and exchange orders below the chart, with controls for manual entries and closing positions.
-
-Frontier supports **Binance USDT perpetuals, Hyperliquid, OKX and Bitget**. You can browse public markets before connecting an execution account; trading requires a matching account. Generating a plan does not submit an order.
-
-| Entry | How it works |
-| :---- | :----------- |
-| **Market** | Enter at the available market price after approval; the displayed entry is an estimate. |
-| **Limit** | Submit an entry at a chosen price. |
-| **Ladder** | Split the position across weighted price levels. |
-| **TWAP** | Release a finite sequence of orders over time, within the approved price limits. |
-
-Limit orders and scheduled slices may remain unfilled. [Execution details and recovery](docs/features/trade-planning.md).
-
-## Autopilot
-
-For strategies you want to run continuously, configure a trader with a model, exchange account and strategy. Autopilot reads the market, makes decisions and routes orders through the NOFX exchange runtime. The Dashboard shows positions, performance and decision history.
-
-**Frontier requires approval for each trade. Autopilot can place trades while it is running.** Starting or stopping Autopilot is a separate action.
-
-| Workspace | What you do there |
-| :-------- | :---------------- |
-| **Config** | Connect models, fund the AI wallet and manage trading accounts. |
-| **Frontier** | Explore markets, compare entry plans and place reviewed orders. |
-| **Dashboard** | Follow your running traders, positions and decision history. |
-| **Strategy** | Configure market selection, indicators, sizing and trading instructions. |
-| **Leaderboard** | Compare published trader performance. |
-
-## Your first session
-
-1. **Create your local account.** Sign in to the instance you just started.
-2. **Set up AI in Config.** Choose a model. With Claw402, create or import an AI fee wallet, save its private key and fund its address with **USDC on Base**. This balance pays for model and paid-data requests.
-3. **Add a trading account.** Connect the exchange you want to use. Check its account equity and available balance. Trading funds stay separate from your AI fee wallet.
-4. **Open Frontier.** Select the exchange, account and market. Generate plans, compare them on the chart and review an order when you are ready.
-
-For continuous trading, configure and start Autopilot separately.
-
-### Updating an installer-based installation
-
-After stopping active Autopilot traders and reviewing any running Frontier execution, run these commands from your installation directory (by default `~/nofx`):
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-Keep `.env` and the `data/` directory when upgrading; they contain configuration, encryption material and saved application state.
-
-After restarting, check positions and orders at the exchange and reconcile any execution marked as needing attention before placing another trade. Stopping a process does not close its positions.
-
-## Source builds and other options
-
-<details>
-<summary>Developers: build and update from source</summary>
-
-Use this option when developing NOFX or testing source changes before published images are updated. Install Git and Docker with Compose, and start Docker:
-
-```bash
-git clone --recurse-submodules https://github.com/NoFxAiOS/nofx.git
-cd nofx
-./start.sh start --build
-```
-
-The startup script creates `.env` when needed and generates missing encryption keys. If you cloned without submodules, run `git submodule update --init web/vendor/charting` before building. TradingView chart assets are subject to their applicable license; see [chart integration notes](docs/features/trade-planning.md#harness-chart-and-plugins).
-
-To update a source installation, stop active Autopilot traders and review running Frontier execution, then:
-
-```bash
-git pull --ff-only
-git submodule update --init web/vendor/charting
-./start.sh start --build
-```
-
-</details>
-
-<details>
-<summary>Windows, Railway and remote deployments</summary>
-
-**Windows**
-
-Use Docker Desktop and a Bash environment such as WSL2, then run the one-line installer above.
-
-**Railway**
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/nofx?referralCode=nofx)
-
-**Remote deployments**
-
-The installer uses the production Compose configuration, which publishes its ports on all host interfaces by default. The source Compose configuration binds the frontend and API to `127.0.0.1` by default. Configure host bindings and an authenticated HTTPS proxy before exposing a remote instance.
-
-</details>
-
-<details>
-<summary>Development without Docker</summary>
-
-Use the Go version specified in [go.mod](go.mod), Node.js 24 as used by the frontend Docker build, and TA-Lib. Initialize the charting submodule before starting the frontend. Configure the environment using [.env.example](.env.example).
-
-```bash
-# Backend
+cp .env.example .env   # 填入 AI_API_KEY（和 Telegram 配置）
 go build -o nofx .
 ./nofx
-
-# Frontend, in a second terminal
-cd web
-npm ci
-npm run dev
 ```
 
-</details>
+默认候选币种 BTC / ETH / SOL，每 300 秒一个决策周期（`SCAN_INTERVAL` 可调，最小 30s），初始本金 1000 USDT（`INITIAL_BALANCE`）。
 
-## Models and data
+## 环境变量
 
-Frontier and Autopilot reuse models configured in NOFX. [Claw402](https://claw402.ai) provides access to multiple models with usage settled in USDC on Base; choose the model in Config and switch it in the workspace.
+| 变量 | 说明 | 默认 |
+| :--- | :--- | :--- |
+| `DB_PATH` | SQLite 文件路径 | `data/data.db` |
+| `AI_PROVIDER` | deepseek / openai / claude / qwen / gemini / grok / kimi / minimax | `deepseek` |
+| `AI_MODEL` | 模型名，留空用 provider 默认 | 空 |
+| `AI_API_KEY` | AI key（也可用 `DEEPSEEK_API_KEY` 等常规变量） | 必填 |
+| `TELEGRAM_BOT_TOKEN` | @BotFather 创建 bot 获得 | 空（禁用推送） |
+| `TELEGRAM_CHAT_ID` | 目标 chat id | 空（禁用推送） |
+| `INITIAL_BALANCE` | 初始本金 USDT（仅首次建账生效） | `1000` |
+| `SCAN_INTERVAL` | 决策周期秒数 | `300` |
+| `OKX_BASE_URL` | OKX 公开 REST 地址 | `https://www.okx.com` |
 
-Exchange prices and candles come from the selected venue. AI500 and supported holder analytics use paid Claw402 routes. Data availability depends on the market and provider: a Hyperliquid holder dataset is not a substitute for Binance, OKX or Bitget data. The activity stream shows data reads and planning progress.
+## 交易周期流程
 
-AI fees, paid-data fees and exchange trading funds are separate. Model requests can incur charges even when no trade is placed.
+1. 检查止损/止盈/爆仓（市价触发，平仓并推送）。
+2. 组装上下文：账户权益、持仓、最近平仓记录、胜率/盈亏比/最大回撤。
+3. 拉取候选币种多周期 K 线与指标，调用 LLM 输出决策。
+4. 持久化决策与权益快照，然后按「先平仓后开仓、高信心优先」执行。
+5. 节流保护：最小持仓 90 分钟（价格亏损 ≤ -3% 或盈利 ≥ +8% 可提前平），噪声区间（90 分钟~3 小时、-2%~+3%）不平，平仓后 4 小时内禁止同币种再入场。
 
-## Exchanges
+## 目录结构
 
-Frontier currently exposes Binance, Hyperliquid, OKX and Bitget. The broader NOFX runtime also includes Bybit, Gate, KuCoin, Aster and Lighter. Available products, order types and account permissions depend on the exchange.
-
-The links below are partner registration links that support development. Fee offers are set by each exchange.
-
-| Exchange                                                                                                                      | Status | Partner link                                                          |
-| :---------------------------------------------------------------------------------------------------------------------------- | :----: | :---------------------------------------------------------------------------------- |
-| <img src="web/public/exchange-icons/binance.jpg" width="20" height="20" style="vertical-align: middle;"/> **Binance**       |   ✅   | [Register](https://www.binance.com/join?ref=NOFXENG)                                |
-| <img src="web/public/exchange-icons/bybit.png" width="20" height="20" style="vertical-align: middle;"/> **Bybit**           |   ✅   | [Register](https://partner.bybit.com/b/83856)                                       |
-| <img src="web/public/exchange-icons/okx.svg" width="20" height="20" style="vertical-align: middle;"/> **OKX**               |   ✅   | [Register](https://www.okx.com/join/1865360)                                        |
-| <img src="web/public/exchange-icons/hyperliquid.png" width="20" height="20" style="vertical-align: middle;"/> **Hyperliquid** |   ✅   | [Register](https://app.hyperliquid.xyz/join/AITRADING)                              |
-| <img src="web/public/exchange-icons/bitget.svg" width="20" height="20" style="vertical-align: middle;"/> **Bitget**         |   ✅   | [Register](https://www.bitget.com/referral/register?from=referral&clacCode=c8a43172) |
-| <img src="web/public/exchange-icons/kucoin.svg" width="20" height="20" style="vertical-align: middle;"/> **KuCoin**         |   ✅   | [Register](https://www.kucoin.com/r/broker/CXEV7XKK)                                |
-| <img src="web/public/exchange-icons/gate.svg" width="20" height="20" style="vertical-align: middle;"/> **Gate**             |   ✅   | [Register](https://www.gatenode.xyz/share/VQBGUAxY)                                 |
-| <img src="web/public/exchange-icons/aster.svg" width="20" height="20" style="vertical-align: middle;"/> **Aster**           |   ✅   | [Register](https://www.asterdex.com/en/referral/fdfc0e)                             |
-| <img src="web/public/exchange-icons/lighter.png" width="20" height="20" style="vertical-align: middle;"/> **Lighter**       |   ✅   | [Register](https://app.lighter.xyz/?referral=68151432)                              |
-
-## How execution works
-
-Plans and strategy decisions use the existing NOFX exchange adapters. The model does not receive wallet private keys or exchange credentials in its prompt.
-
-- **Reviewable orders.** Frontier shows account, sizing, entry and exit details before approval. Autopilot follows its configured strategy and runtime limits.
-- **Account-aware sizing.** Frontier uses the selected leverage and current available margin, with execution costs reserved. Quantity, tick size and venue limits still apply.
-- **Exchange-side exits.** The runtime places supported stop-loss and take-profit orders as fills are observed. Entry and protection are not atomic; inspect the exchange if protection fails.
-- **Order reconciliation.** Uncertain submission results are checked against the exchange rather than blindly resubmitted. Unresolved executions can pause further entries.
-- **Local configuration.** Exchange credentials are stored encrypted by the NOFX server. Your installation also holds signing material, so protect its files and backups.
-
-## Architecture
-
-```text
-Desktop browser
-  Frontier · Config · Dashboard · Strategy
-                    │
-                NOFX API
-                    │
-       ┌────────────┴────────────┐
-  Frontier planning         Autopilot
-  Review and approval       Strategy loop
-       └────────────┬────────────┘
-              Shared execution
-              Exchange adapters
-                    │
-             Your trading accounts
-
-Models and paid data: NOFX provider clients · Claw402
-Storage: local configuration, plans and execution records
+```
+main.go               启动装配
+config/               进程配置（.env）
+market/               OKX 公开行情 + 指标计算
+kernel/               AI 决策引擎（prompt 组装、决策解析、风控参数）
+trader/               自动交易循环（周期调度、节流、风控、Telegram 消息）
+trader/paper/         本地模拟账本 broker
+trader/types/         broker 接口
+store/                GORM + SQLite 持久层
+mcp/                  多 provider LLM 客户端
+notify/               Telegram bot 推送
 ```
 
-<details>
-<summary>Earlier interface walkthrough</summary>
+## 免责声明
 
-This video shows an earlier version of the interface. Navigation and visual design have since changed.
-
-https://github.com/user-attachments/assets/3310f495-14c5-4586-a1cc-3d32e44aa505
-
-</details>
-
-## Brand assets
-
-- [Logo mark — SVG](web/public/icons/nofx-flow.svg)
-- [GitHub avatar — PNG, 512 × 512](web/public/brand/nofx-avatar-512.png)
-- [GitHub avatar — SVG source](web/public/brand/nofx-avatar.svg)
-- [README banner — SVG](docs/assets/nofx-banner.svg)
-
-## Documentation
-
-| Guide | Contents |
-| :---- | :------- |
-| [Frontier](docs/features/trade-planning.md) | Planning, live execution, data and recovery |
-| [Getting started](docs/getting-started/README.md) | Deployment and exchange API guides |
-| [Architecture](docs/architecture/README.md) | System design and module index |
-| [Strategy module](docs/architecture/STRATEGY_MODULE.md) | Coin selection, AI prompts and execution |
-| [FAQ](docs/guides/faq.en.md) | Common questions |
-| [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Diagnosing common issues |
-
-## Community
-
-
-[Telegram](https://t.me/nofx_dev_community) · [Twitter/X](https://x.com/vergex_ai) · [Issues](https://github.com/NoFxAiOS/nofx/issues) · [vergex.trade](https://vergex.trade) · [Live dashboard](https://vergex.trade/explore)
-
-## Contributing
-
-Code, documentation, translations, and bug reports are all welcome — see the [Contributing Guide](CONTRIBUTING.md), [Code of Conduct](CODE_OF_CONDUCT.md), and [Security Policy](SECURITY.md).
-
-NOFX tracks meaningful contributions and intends to reward contributors as the ecosystem grows. Priority issues carry higher weight.
-
-| Contribution      | Weight |
-| :---------------- | :----: |
-| Pinned Issue PRs  | ★★★★★★ |
-| Code (Merged PRs) | ★★★★★  |
-| Bug Fixes         |  ★★★★  |
-| Feature Ideas     |  ★★★   |
-| Bug Reports       |   ★★   |
-| Documentation     |   ★★   |
-
-<a href="https://github.com/NoFxAiOS/nofx/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=NoFxAiOS/nofx" alt="Contributors"/>
-</a>
-
-## Sponsors
-
-<a href="https://github.com/pjl914335852-ux"><img src="https://github.com/pjl914335852-ux.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/cat9999aaa"><img src="https://github.com/cat9999aaa.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/1733055465"><img src="https://github.com/1733055465.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/kolal2020"><img src="https://github.com/kolal2020.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/CyberFFarm"><img src="https://github.com/CyberFFarm.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/vip3001003"><img src="https://github.com/vip3001003.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/mrtluh"><img src="https://github.com/mrtluh.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/cpcp1117-source"><img src="https://github.com/cpcp1117-source.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/match-007"><img src="https://github.com/match-007.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/leiwuhen1715"><img src="https://github.com/leiwuhen1715.png" width="50" height="50" style="border-radius:50%"/></a>
-<a href="https://github.com/SHAOXIA1991"><img src="https://github.com/SHAOXIA1991.png" width="50" height="50" style="border-radius:50%"/></a>
-
-[Become a sponsor](https://github.com/sponsors/NoFxAiOS)
-
-<br/>
-
-If NOFX is useful to you, a star helps other traders find it.
-
-[![Star History Chart](https://star-history.dera.page/svg?repos=NoFxAiOS/nofx&type=Date)](https://star-history.dera.page/#NoFxAiOS/nofx&Date)
-
-## License
-
-[AGPL-3.0](LICENSE)
-
-<sub>Automated trading involves substantial risk. AI-driven strategies are experimental and can lose money. Size positions appropriately, understand each venue, and never trade funds you cannot afford to lose. Full [disclaimer](DISCLAIMER.md).</sub>
+本项目仅用于模拟交易研究，不构成投资建议。模拟结果不代表实盘表现。

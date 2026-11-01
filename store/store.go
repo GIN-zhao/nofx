@@ -18,18 +18,12 @@ type Store struct {
 	driver *DBDriver // Database driver for abstraction (legacy)
 
 	// Sub-stores (lazy initialization)
-	user           *UserStore
-	aiModel        *AIModelStore
-	exchange       *ExchangeStore
-	trader         *TraderStore
-	decision       *DecisionStore
-	position       *PositionStore
-	strategy       *StrategyStore
-	equity         *EquityStore
-	order          *OrderStore
-	grid           *GridStore
-	aiCharge       *AIChargeStore
-	telegramConfig TelegramConfigStore
+	trader   *TraderStore
+	decision *DecisionStore
+	position *PositionStore
+	strategy *StrategyStore
+	equity   *EquityStore
+	order    *OrderStore
 
 	mu sync.RWMutex
 }
@@ -128,15 +122,6 @@ func (s *Store) initTables() error {
 	}
 
 	// Initialize sub-store tables
-	if err := s.User().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize user tables: %w", err)
-	}
-	if err := s.AIModel().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize AI model tables: %w", err)
-	}
-	if err := s.Exchange().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize exchange tables: %w", err)
-	}
 	if err := s.Trader().initTables(); err != nil {
 		return fmt.Errorf("failed to initialize trader tables: %w", err)
 	}
@@ -155,26 +140,11 @@ func (s *Store) initTables() error {
 	if err := s.Order().InitTables(); err != nil {
 		return fmt.Errorf("failed to initialize order tables: %w", err)
 	}
-	if err := s.Grid().InitTables(); err != nil {
-		return fmt.Errorf("failed to initialize grid tables: %w", err)
-	}
-	if err := s.TelegramConfig().(*telegramConfigStore).initTables(); err != nil {
-		return fmt.Errorf("failed to initialize telegram config tables: %w", err)
-	}
-	if err := s.AICharge().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize AI charge tables: %w", err)
-	}
 	return nil
 }
 
 // initDefaultData initializes default data
 func (s *Store) initDefaultData() error {
-	if err := s.AIModel().initDefaultData(); err != nil {
-		return err
-	}
-	if err := s.Exchange().initDefaultData(); err != nil {
-		return err
-	}
 	if err := s.Strategy().initDefaultData(); err != nil {
 		return err
 	}
@@ -185,36 +155,6 @@ func (s *Store) initDefaultData() error {
 		logger.Infof("✅ Migrated %d equity records to new table", migrated)
 	}
 	return nil
-}
-
-// User gets user storage
-func (s *Store) User() *UserStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.user == nil {
-		s.user = NewUserStore(s.gdb)
-	}
-	return s.user
-}
-
-// AIModel gets AI model storage
-func (s *Store) AIModel() *AIModelStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.aiModel == nil {
-		s.aiModel = NewAIModelStore(s.gdb)
-	}
-	return s.aiModel
-}
-
-// Exchange gets exchange storage
-func (s *Store) Exchange() *ExchangeStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.exchange == nil {
-		s.exchange = NewExchangeStore(s.gdb)
-	}
-	return s.exchange
 }
 
 // Trader gets trader storage
@@ -275,36 +215,6 @@ func (s *Store) Order() *OrderStore {
 		s.order = NewOrderStore(s.gdb)
 	}
 	return s.order
-}
-
-// Grid gets grid trading storage
-func (s *Store) Grid() *GridStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.grid == nil {
-		s.grid = NewGridStore(s.gdb)
-	}
-	return s.grid
-}
-
-// AICharge gets AI charge storage
-func (s *Store) AICharge() *AIChargeStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.aiCharge == nil {
-		s.aiCharge = NewAIChargeStore(s.gdb)
-	}
-	return s.aiCharge
-}
-
-// TelegramConfig gets Telegram bot configuration storage
-func (s *Store) TelegramConfig() TelegramConfigStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.telegramConfig == nil {
-		s.telegramConfig = NewTelegramConfigStore(s.gdb)
-	}
-	return s.telegramConfig
 }
 
 // Close closes database connection

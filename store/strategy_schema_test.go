@@ -98,16 +98,14 @@ func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge strategy config: %v", err)
 	}
+	merged.NormalizeProductSchema()
 	merged.ClampLimits()
 
 	if merged.StrategyType != "ai_trading" {
 		t.Fatalf("strategy_type = %q, want ai_trading", merged.StrategyType)
 	}
-	if merged.CoinSource.SourceType != "ai500" {
-		t.Fatalf("source_type = %q, want ai500", merged.CoinSource.SourceType)
-	}
-	if !merged.CoinSource.UseAI500 || merged.CoinSource.UseOITop || merged.CoinSource.UseOILow {
-		t.Fatalf("coin source flags not normalized: %+v", merged.CoinSource)
+	if merged.CoinSource.SourceType != "static" {
+		t.Fatalf("source_type = %q, want static (only static coin lists are supported)", merged.CoinSource.SourceType)
 	}
 	if merged.Indicators.Klines.PrimaryTimeframe != "1m" {
 		t.Fatalf("primary_timeframe = %q, want 1m", merged.Indicators.Klines.PrimaryTimeframe)
@@ -123,61 +121,19 @@ func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 	}
 }
 
-func TestStrategyConfigNormalizeProductSchemaForVergexSignal(t *testing.T) {
+func TestStrategyConfigNormalizeProductSchemaForcesStaticCoins(t *testing.T) {
 	cfg := GetDefaultStrategyConfig("zh")
 	cfg.CoinSource = CoinSourceConfig{
-		SourceType: "Claw402 Vergex signal board",
+		SourceType:  "Claw402 Vergex signal board",
+		StaticCoins: []string{"btcusdt", "eth-usdt"},
 	}
 
 	cfg.NormalizeProductSchema()
 
-	if cfg.CoinSource.SourceType != "vergex_signal" {
-		t.Fatalf("source_type = %q, want vergex_signal", cfg.CoinSource.SourceType)
+	if cfg.CoinSource.SourceType != "static" {
+		t.Fatalf("source_type = %q, want static (legacy sources are dropped)", cfg.CoinSource.SourceType)
 	}
-	if cfg.CoinSource.VergexLimit != 10 {
-		t.Fatalf("vergex_limit = %d, want 10", cfg.CoinSource.VergexLimit)
+	if len(cfg.CoinSource.StaticCoins) != 2 || cfg.CoinSource.StaticCoins[0] != "BTCUSDT" || cfg.CoinSource.StaticCoins[1] != "ETH-USDT" {
+		t.Fatalf("static_coins = %+v, want uppercase symbols preserved", cfg.CoinSource.StaticCoins)
 	}
-	if cfg.CoinSource.VergexMarketType != "all" {
-		t.Fatalf("vergex_market_type = %q, want all", cfg.CoinSource.VergexMarketType)
-	}
-	if cfg.CoinSource.VergexChain != "hyperliquid" {
-		t.Fatalf("vergex_chain = %q, want hyperliquid", cfg.CoinSource.VergexChain)
-	}
-}
-
-func TestStrategyConfigNormalizeProductSchemaForVergexSignalLimits(t *testing.T) {
-	t.Run("dynamic board keeps the one built-in strategy candidate depth", func(t *testing.T) {
-		cfg := GetDefaultStrategyConfig("zh")
-		cfg.CoinSource = CoinSourceConfig{
-			SourceType:    "vergex_signal",
-			VergexLimit:   1,
-			StaticCoins:   nil,
-			VergexChain:   "hyperliquid",
-			VergexLiqBand: "",
-		}
-
-		cfg.NormalizeProductSchema()
-
-		if cfg.CoinSource.VergexLimit != 10 {
-			t.Fatalf("vergex_limit = %d, want 10", cfg.CoinSource.VergexLimit)
-		}
-	})
-
-	t.Run("manual picks keep selected count", func(t *testing.T) {
-		cfg := GetDefaultStrategyConfig("zh")
-		cfg.CoinSource = CoinSourceConfig{
-			SourceType:  "vergex_signal",
-			VergexLimit: 1,
-			StaticCoins: []string{"xyz:nvda", "XYZ:AAPL"},
-		}
-
-		cfg.NormalizeProductSchema()
-
-		if cfg.CoinSource.VergexLimit != 2 {
-			t.Fatalf("vergex_limit = %d, want 2", cfg.CoinSource.VergexLimit)
-		}
-		if got := cfg.CoinSource.StaticCoins; len(got) != 2 || got[0] != "XYZ:NVDA" || got[1] != "XYZ:AAPL" {
-			t.Fatalf("static_coins = %+v, want normalized xyz symbols", got)
-		}
-	})
 }

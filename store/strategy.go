@@ -32,64 +32,9 @@ const (
 	MaxConfidence     = 100
 )
 
-const (
-	AutopilotDefaultMaxPositions          = 8
-	AutopilotMaxPositionValueRatio        = 5.0
-	legacyAutopilotAllocatedPositionRatio = 2.4
-)
-
-// MigrateLegacyAutopilotRiskDefaults upgrades NOFX Autopilot books saved by
-// older releases. Trader deletion intentionally keeps strategies, so without
-// this migration a newly created trader would bind to the same stale strategy
-// and continue using the old limit.
-func MigrateLegacyAutopilotRiskDefaults(config *StrategyConfig) bool {
-	if config == nil {
-		return false
-	}
-
-	config.NormalizeProductSchema()
-	if config.CoinSource.SourceType != "vergex_signal" {
-		return false
-	}
-
-	risk := &config.RiskControl
-	legacyTwoPositionBook := risk.MaxPositions == 2 &&
-		isLegacyAutopilotPositionRatio(risk.BTCETHMaxPositionValueRatio) &&
-		isLegacyAutopilotPositionRatio(risk.AltcoinMaxPositionValueRatio)
-	legacyFourPositionBook := risk.MaxPositions == 4 &&
-		risk.BTCETHMaxPositionValueRatio == legacyAutopilotAllocatedPositionRatio &&
-		risk.AltcoinMaxPositionValueRatio == legacyAutopilotAllocatedPositionRatio
-	if !legacyTwoPositionBook && !legacyFourPositionBook {
-		return false
-	}
-
-	risk.MaxPositions = AutopilotDefaultMaxPositions
-	risk.BTCETHMaxPositionValueRatio = AutopilotMaxPositionValueRatio
-	risk.AltcoinMaxPositionValueRatio = AutopilotMaxPositionValueRatio
-	return true
-}
-
-func isLegacyAutopilotPositionRatio(value float64) bool {
-	return value == 5.0 || value == 10.0
-}
-
 // ClampLimits enforces product-level limits on strategy config to prevent token overflow.
 func (c *StrategyConfig) ClampLimits() {
 	c.NormalizeProductSchema()
-
-	// Clamp coin source limits
-	if c.CoinSource.AI500Limit > MaxCandidateCoins {
-		c.CoinSource.AI500Limit = MaxCandidateCoins
-	}
-	if c.CoinSource.OITopLimit > MaxCandidateCoins {
-		c.CoinSource.OITopLimit = MaxCandidateCoins
-	}
-	if c.CoinSource.OILowLimit > MaxCandidateCoins {
-		c.CoinSource.OILowLimit = MaxCandidateCoins
-	}
-	if c.CoinSource.VergexLimit > MaxCandidateCoins {
-		c.CoinSource.VergexLimit = MaxCandidateCoins
-	}
 
 	// Clamp static coins
 	if len(c.CoinSource.StaticCoins) > MaxCandidateCoins {
@@ -147,14 +92,6 @@ func (c *StrategyConfig) ClampLimits() {
 	if c.RiskControl.AltcoinMaxPositionValueRatio > MaxPositionRatio {
 		c.RiskControl.AltcoinMaxPositionValueRatio = MaxPositionRatio
 	}
-	if c.CoinSource.SourceType == "vergex_signal" {
-		if c.RiskControl.BTCETHMaxPositionValueRatio > AutopilotMaxPositionValueRatio {
-			c.RiskControl.BTCETHMaxPositionValueRatio = AutopilotMaxPositionValueRatio
-		}
-		if c.RiskControl.AltcoinMaxPositionValueRatio > AutopilotMaxPositionValueRatio {
-			c.RiskControl.AltcoinMaxPositionValueRatio = AutopilotMaxPositionValueRatio
-		}
-	}
 
 	// Clamp risk parameters and entry requirements.
 	if c.RiskControl.MinRiskRewardRatio < MinRiskReward {
@@ -183,128 +120,13 @@ func (c *StrategyConfig) ClampLimits() {
 	}
 }
 
-// NormalizeProductSchema keeps saved strategy JSON aligned with the product
-// editor schema. LLMs may emit user-facing labels such as "AI500"; persistence
-// must use the exact frontend/backend enum values.
+// NormalizeProductSchema keeps saved strategy JSON aligned with the current
+// schema: only static coin lists are supported as a coin source.
 func (c *StrategyConfig) NormalizeProductSchema() {
 	c.StrategyType = normalizeStrategyType(c.StrategyType)
 	c.CoinSource.StaticCoins = normalizeSymbols(c.CoinSource.StaticCoins)
 	c.CoinSource.ExcludedCoins = normalizeSymbols(c.CoinSource.ExcludedCoins)
-	c.CoinSource.SourceType = normalizeCoinSourceType(c.CoinSource.SourceType)
-	if c.CoinSource.SourceType == "" {
-		c.CoinSource.SourceType = inferCoinSourceType(c.CoinSource)
-	}
-
-	switch c.CoinSource.SourceType {
-	case "ai500":
-		c.CoinSource.UseAI500 = true
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		if c.CoinSource.AI500Limit <= 0 {
-			c.CoinSource.AI500Limit = 3
-		}
-	case "oi_top":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = true
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		if c.CoinSource.OITopLimit <= 0 {
-			c.CoinSource.OITopLimit = 3
-		}
-	case "oi_low":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = true
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		if c.CoinSource.OILowLimit <= 0 {
-			c.CoinSource.OILowLimit = 3
-		}
-	case "static":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-	case "hyper_all":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = true
-		c.CoinSource.UseHyperMain = false
-	case "hyper_main":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = true
-		if c.CoinSource.HyperMainLimit <= 0 {
-			c.CoinSource.HyperMainLimit = 30
-		}
-	case "hyper_rank":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		if c.CoinSource.HyperRankCategory == "" {
-			c.CoinSource.HyperRankCategory = "stock"
-		}
-		if c.CoinSource.HyperRankDirection == "" {
-			c.CoinSource.HyperRankDirection = "gainers"
-		}
-		if c.CoinSource.HyperRankLimit <= 0 {
-			c.CoinSource.HyperRankLimit = 5
-		}
-	case "vergex_signal":
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		minLimit := 10
-		if len(c.CoinSource.StaticCoins) > 0 {
-			minLimit = len(c.CoinSource.StaticCoins)
-			if minLimit > MaxCandidateCoins {
-				minLimit = MaxCandidateCoins
-			}
-		}
-		if c.CoinSource.VergexLimit < minLimit {
-			c.CoinSource.VergexLimit = minLimit
-		}
-		if c.CoinSource.VergexMarketType == "" {
-			c.CoinSource.VergexMarketType = "all"
-		}
-		if c.CoinSource.VergexChain == "" {
-			c.CoinSource.VergexChain = "hyperliquid"
-		}
-	default:
-		c.CoinSource.SourceType = "vergex_signal"
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		minLimit := 10
-		if len(c.CoinSource.StaticCoins) > 0 {
-			minLimit = len(c.CoinSource.StaticCoins)
-			if minLimit > MaxCandidateCoins {
-				minLimit = MaxCandidateCoins
-			}
-		}
-		if c.CoinSource.VergexLimit < minLimit {
-			c.CoinSource.VergexLimit = minLimit
-		}
-		if c.CoinSource.VergexMarketType == "" {
-			c.CoinSource.VergexMarketType = "all"
-		}
-		if c.CoinSource.VergexChain == "" {
-			c.CoinSource.VergexChain = "hyperliquid"
-		}
-	}
+	c.CoinSource.SourceType = "static"
 
 	c.Indicators.Klines.PrimaryTimeframe = normalizeTimeframe(c.Indicators.Klines.PrimaryTimeframe)
 	c.Indicators.Klines.LongerTimeframe = normalizeTimeframe(c.Indicators.Klines.LongerTimeframe)
@@ -323,56 +145,6 @@ func normalizeStrategyType(value string) string {
 		return "ai_trading"
 	default:
 		return value
-	}
-}
-
-func normalizeCoinSourceType(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	compact := strings.NewReplacer(" ", "", "_", "", "-", "", "datasource", "", "coinselection", "", "coin", "").Replace(value)
-	switch {
-	case compact == "":
-		return ""
-	case strings.Contains(compact, "ai500"):
-		return "ai500"
-	case strings.Contains(compact, "oitop") || strings.Contains(value, "oi top") || strings.Contains(value, "highest open interest") || strings.Contains(value, "top open interest"):
-		return "oi_top"
-	case strings.Contains(compact, "oilow") || strings.Contains(value, "oi low") || strings.Contains(value, "lowest open interest") || strings.Contains(value, "low open interest"):
-		return "oi_low"
-	case strings.Contains(compact, "hyperrank"):
-		return "hyper_rank"
-	case strings.Contains(compact, "vergex") || strings.Contains(compact, "claw402") || strings.Contains(compact, "dynamicranking") || strings.Contains(value, "dynamic board") || strings.Contains(value, "gainers board") || strings.Contains(value, "signal board"):
-		return "vergex_signal"
-	case strings.Contains(compact, "hyperall"):
-		return "hyper_all"
-	case strings.Contains(compact, "hypermain"):
-		return "hyper_main"
-	case strings.Contains(value, "static") || strings.Contains(value, "fixed"):
-		return "static"
-	default:
-		return value
-	}
-}
-
-func inferCoinSourceType(source CoinSourceConfig) string {
-	switch {
-	case len(source.StaticCoins) > 0:
-		return "static"
-	case source.UseAI500:
-		return "ai500"
-	case source.UseOITop:
-		return "oi_top"
-	case source.UseOILow:
-		return "oi_low"
-	case source.UseHyperAll:
-		return "hyper_all"
-	case source.UseHyperMain:
-		return "hyper_main"
-	case source.VergexLimit > 0 || source.VergexMarketType != "" || source.VergexChain != "" || source.VergexLiqBand != "":
-		return "vergex_signal"
-	case source.HyperRankCategory != "" || source.HyperRankDirection != "" || source.HyperRankLimit > 0:
-		return "hyper_rank"
-	default:
-		return "vergex_signal"
 	}
 }
 
@@ -838,45 +610,12 @@ type PromptSectionsConfig struct {
 
 // CoinSourceConfig coin source configuration
 type CoinSourceConfig struct {
-	// source type shown in the product editor: "static" | "ai500" | "oi_top" | "oi_low"
+	// source type; only "static" is supported
 	SourceType string `json:"source_type"`
 	// static coin list (used when source_type = "static")
 	StaticCoins []string `json:"static_coins,omitempty"`
 	// excluded coins list (filtered out from all sources)
 	ExcludedCoins []string `json:"excluded_coins,omitempty"`
-	// whether to use AI500 coin pool
-	UseAI500 bool `json:"use_ai500"`
-	// AI500 coin pool maximum count
-	AI500Limit int `json:"ai500_limit,omitempty"`
-	// whether to use OI Top (OI increase ranking, suitable for long positions)
-	UseOITop bool `json:"use_oi_top"`
-	// OI Top maximum count
-	OITopLimit int `json:"oi_top_limit,omitempty"`
-	// whether to use OI Low (OI decrease ranking, suitable for short positions)
-	UseOILow bool `json:"use_oi_low"`
-	// OI Low maximum count
-	OILowLimit int `json:"oi_low_limit,omitempty"`
-	// whether to use Hyperliquid All coins (all available perp pairs)
-	UseHyperAll bool `json:"use_hyper_all"`
-	// whether to use Hyperliquid Main coins (top N by 24h volume)
-	UseHyperMain bool `json:"use_hyper_main"`
-	// Hyperliquid Main maximum count (default 20)
-	HyperMainLimit int `json:"hyper_main_limit,omitempty"`
-	// Hyperliquid dynamic ranking category: stock, commodity, index, forex, pre_ipo, crypto, all
-	HyperRankCategory string `json:"hyper_rank_category,omitempty"`
-	// Hyperliquid dynamic ranking direction: gainers, losers, volume
-	HyperRankDirection string `json:"hyper_rank_direction,omitempty"`
-	// Hyperliquid dynamic ranking maximum count. Defaults to 5 and is hard capped at 10 for AI context safety.
-	HyperRankLimit int `json:"hyper_rank_limit,omitempty"`
-	// Vergex direction-board maximum count. Defaults to 5 and is hard capped at 10.
-	VergexLimit int `json:"vergex_limit,omitempty"`
-	// Vergex market type for detail endpoints, e.g. hip3_perp for Hyperliquid TradeFi perps.
-	VergexMarketType string `json:"vergex_market_type,omitempty"`
-	// Vergex chain query parameter. Defaults to hyperliquid.
-	VergexChain string `json:"vergex_chain,omitempty"`
-	// Vergex liquidation band query parameter.
-	VergexLiqBand string `json:"vergex_liq_band,omitempty"`
-	// Note: API URLs are now built automatically using NofxOSAPIKey from IndicatorConfig
 }
 
 // IndicatorConfig indicator configuration
@@ -902,32 +641,6 @@ type IndicatorConfig struct {
 	ATRPeriods []int `json:"atr_periods,omitempty"` // default [14]
 	// BOLL period configuration (period, standard deviation multiplier is fixed at 2)
 	BOLLPeriods []int `json:"boll_periods,omitempty"` // default [20] - can select multiple timeframes
-	// external data sources
-	ExternalDataSources []ExternalDataSource `json:"external_data_sources,omitempty"`
-
-	// ========== NofxOS Unified API Configuration ==========
-	// Unified API Key for all NofxOS data sources
-	NofxOSAPIKey string `json:"nofxos_api_key,omitempty"`
-
-	// quantitative data sources (capital flow, position changes, price changes)
-	EnableQuantData    bool `json:"enable_quant_data"`    // whether to enable quantitative data
-	EnableQuantOI      bool `json:"enable_quant_oi"`      // whether to show OI data
-	EnableQuantNetflow bool `json:"enable_quant_netflow"` // whether to show Netflow data
-
-	// OI ranking data (market-wide open interest increase/decrease rankings)
-	EnableOIRanking   bool   `json:"enable_oi_ranking"`             // whether to enable OI ranking data
-	OIRankingDuration string `json:"oi_ranking_duration,omitempty"` // duration: 1h, 4h, 24h
-	OIRankingLimit    int    `json:"oi_ranking_limit,omitempty"`    // number of entries (default 10)
-
-	// NetFlow ranking data (market-wide fund flow rankings - institution/personal)
-	EnableNetFlowRanking   bool   `json:"enable_netflow_ranking"`             // whether to enable NetFlow ranking data
-	NetFlowRankingDuration string `json:"netflow_ranking_duration,omitempty"` // duration: 1h, 4h, 24h
-	NetFlowRankingLimit    int    `json:"netflow_ranking_limit,omitempty"`    // number of entries (default 10)
-
-	// Price ranking data (market-wide gainers/losers)
-	EnablePriceRanking   bool   `json:"enable_price_ranking"`             // whether to enable price ranking data
-	PriceRankingDuration string `json:"price_ranking_duration,omitempty"` // durations: "1h" or "1h,4h,24h"
-	PriceRankingLimit    int    `json:"price_ranking_limit,omitempty"`    // number of entries per ranking (default 10)
 }
 
 // KlineConfig K-line configuration
@@ -944,17 +657,6 @@ type KlineConfig struct {
 	EnableMultiTimeframe bool `json:"enable_multi_timeframe"`
 	// selected timeframe list (new: supports multi-timeframe selection)
 	SelectedTimeframes []string `json:"selected_timeframes,omitempty"`
-}
-
-// ExternalDataSource external data source configuration
-type ExternalDataSource struct {
-	Name        string            `json:"name"`   // data source name
-	Type        string            `json:"type"`   // type: "api" | "webhook"
-	URL         string            `json:"url"`    // API URL
-	Method      string            `json:"method"` // HTTP method
-	Headers     map[string]string `json:"headers,omitempty"`
-	DataPath    string            `json:"data_path,omitempty"`    // JSON data path
-	RefreshSecs int               `json:"refresh_secs,omitempty"` // refresh interval (seconds)
 }
 
 // RiskControlConfig risk control configuration
@@ -998,9 +700,8 @@ func (s *StrategyStore) initDefaultData() error {
 	return nil
 }
 
-// GetDefaultStrategyConfig returns the default strategy configuration for the given language
+// GetDefaultStrategyConfig returns the default strategy configuration.
 func GetDefaultStrategyConfig(lang string) StrategyConfig {
-	// Normalize language to "zh" or "en"
 	normalizedLang := "en"
 	if lang == "zh" {
 		normalizedLang = "zh"
@@ -1009,111 +710,80 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 	config := StrategyConfig{
 		Language: normalizedLang,
 		CoinSource: CoinSourceConfig{
-			SourceType:        "vergex_signal",
-			UseAI500:          false,
-			AI500Limit:        3,
-			UseOITop:          false,
-			OITopLimit:        3,
-			UseOILow:          false,
-			OILowLimit:        3,
-			UseHyperAll:       false,
-			UseHyperMain:      false,
-			HyperMainLimit:    30,
-			HyperRankCategory: "all",
-			VergexLimit:       10,
-			VergexMarketType:  "all",
-			VergexChain:       "hyperliquid",
+			SourceType:  "static",
+			StaticCoins: []string{"BTC", "ETH", "SOL"},
 		},
 		Indicators: IndicatorConfig{
 			Klines: KlineConfig{
 				PrimaryTimeframe:     "15m",
 				PrimaryCount:         30,
-				LongerTimeframe:      "",
-				LongerCount:          0,
-				EnableMultiTimeframe: false,
-				SelectedTimeframes:   []string{"15m"},
+				EnableMultiTimeframe: true,
+				SelectedTimeframes:   []string{"15m", "1h", "4h"},
 			},
 			EnableRawKlines:   true, // Required - raw OHLCV data for AI analysis
-			EnableEMA:         false,
-			EnableMACD:        false,
-			EnableRSI:         false,
+			EnableEMA:         true,
+			EnableMACD:        true,
+			EnableRSI:         true,
 			EnableATR:         false,
 			EnableBOLL:        false,
-			EnableVolume:      false,
-			EnableOI:          false,
-			EnableFundingRate: false,
+			EnableVolume:      true,
+			EnableOI:          true,
+			EnableFundingRate: true,
 			EMAPeriods:        []int{20, 50},
 			RSIPeriods:        []int{7, 14},
 			ATRPeriods:        []int{14},
 			BOLLPeriods:       []int{20},
-			// Hyperliquid strategies must use native Hyperliquid market data by default.
-			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
-			NofxOSAPIKey:           "",
-			EnableQuantData:        false,
-			EnableQuantOI:          false,
-			EnableQuantNetflow:     false,
-			EnableOIRanking:        false,
-			OIRankingDuration:      "1h",
-			OIRankingLimit:         10,
-			EnableNetFlowRanking:   false,
-			NetFlowRankingDuration: "1h",
-			NetFlowRankingLimit:    10,
-			EnablePriceRanking:     false,
-			PriceRankingDuration:   "1h,4h,24h",
-			PriceRankingLimit:      10,
 		},
 		RiskControl: RiskControlConfig{
-			MaxPositions:                 AutopilotDefaultMaxPositions,   // Eight-position default book (CODE ENFORCED)
-			BTCETHMaxLeverage:            10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
-			AltcoinMaxLeverage:           10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
-			BTCETHMaxPositionValueRatio:  AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5
-			AltcoinMaxPositionValueRatio: AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5
-			MaxMarginUsage:               1.0,                            // Claw402 Autopilot intentionally uses full margin when opening
-			MinPositionSize:              12,                             // Min 12 USDT per position (CODE ENFORCED)
-			MinRiskRewardRatio:           3.0,                            // Min 3:1 profit/loss ratio (AI guided)
-			MinConfidence:                78,                             // Min 78% confidence (AI guided)
+			MaxPositions:                 3,   // Up to 3 simultaneous positions
+			BTCETHMaxLeverage:            10,  // BTC/ETH leverage cap
+			AltcoinMaxLeverage:           5,   // Altcoin leverage cap
+			BTCETHMaxPositionValueRatio:  5.0, // BTC/ETH position value ≤ equity × 5
+			AltcoinMaxPositionValueRatio: 1.0, // Altcoin position value ≤ equity × 1
+			MaxMarginUsage:               0.8, // Keep 20% margin buffer
+			MinPositionSize:              12,  // Min 12 USDT per position
+			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio
+			MinConfidence:                78,  // Min 78% confidence
 		},
 	}
 
 	if lang == "zh" {
 		config.PromptSections = PromptSectionsConfig{
-			RoleDefinition: `# You are the NOFX Claw402 auto-trader
+			RoleDefinition: `# 你是专业的 OKX USDT 永续合约多币种交易 AI
 
-	Trade only the Hyperliquid instruments returned by the current Claw402.ai direction board. The board direction is authoritative; direction history, cost/liquidation heatmap and raw candles are supporting context only.`,
-			TradingFrequency: `# Trading Frequency
+基于多周期 K 线与技术指标分析市场走势，在模拟账本上执行开仓/平仓决策。`,
+			TradingFrequency: `# 交易频率
 
-	- A bullish symbol may open long; a bearish symbol may open short.
-	- Hold while the signal direction remains unchanged.
-	- Close only after the direction changes, becomes neutral, or leaves the valid board.`,
-			EntryStandards: `# Entry Standards
+- 看涨可开多，看跌可开空；方向不明时持有或等待。
+- 已有持仓的币种优先管理，避免频繁开关。`,
+			EntryStandards: `# 开仓标准
 
-	Follow the Claw402 direction exactly. Supporting detail and candles may explain a signal but cannot veto, reverse, or prematurely exit it.`,
-			DecisionProcess: `# Decision Process
+- 只在趋势明确、风险回报比达标时开仓。
+- 每笔仓位必须设置合理的止损与止盈。`,
+			DecisionProcess: `# 决策流程
 
-	1. Read the current Claw402 direction board.
-	2. Hold positions whose direction is unchanged; close changed, neutral or absent signals.
-	3. For flat symbols, map bullish to long and bearish to short.
-	4. Use detail data and candles as context, then output strict JSON.`,
+1. 分析各候选币种的多周期行情与指标。
+2. 结合账户状态与已有持仓决定开仓/平仓/持有。
+3. 输出严格的 JSON 决策。`,
 		}
 	} else {
 		config.PromptSections = PromptSectionsConfig{
-			RoleDefinition: `# You are the NOFX Claw402 auto-trader
+			RoleDefinition: `# You are a professional OKX USDT perpetual multi-asset trading AI
 
-	Trade Hyperliquid instruments from the current Claw402.ai direction board only. The board direction is authoritative; direction history, cost/liquidation heatmap and raw candles are supporting context only.`,
+Analyze multi-timeframe candles and indicators, then execute open/close decisions on the simulated ledger.`,
 			TradingFrequency: `# Trading Frequency
 
-	- A bullish symbol may open long; a bearish symbol may open short.
-	- Hold while the signal direction remains unchanged.
-	- Close only after the direction changes, becomes neutral, or leaves the valid board.`,
+- Open long on bullish setups, short on bearish ones; hold or wait when unclear.
+- Prioritize managing existing positions over frequent round-trips.`,
 			EntryStandards: `# Entry Standards
 
-	Follow the Claw402 direction exactly. Supporting detail and candles may explain a signal but cannot veto, reverse, or prematurely exit it.`,
+- Only enter when the trend is clear and the risk/reward ratio qualifies.
+- Every position must carry a sensible stop loss and take profit.`,
 			DecisionProcess: `# Decision Process
 
-	1. Read the current Claw402 direction board.
-	2. Hold positions whose direction is unchanged; close changed, neutral or absent signals.
-	3. For flat symbols, map bullish to long and bearish to short.
-	4. Use detail data and candles as context, then output strict JSON.`,
+1. Analyze multi-timeframe market data and indicators for each candidate.
+2. Decide open/close/hold based on account state and current positions.
+3. Output strict JSON decisions.`,
 		}
 	}
 
@@ -1438,50 +1108,8 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 
 	breakdown.MarketData = totalMarketChars / 4 // numeric data: ~4 chars per token
 
-	// --- Quant Data ---
-	if c.Indicators.EnableQuantData {
-		quantCharsPerCoin := 0
-		if c.Indicators.EnableQuantOI {
-			quantCharsPerCoin += 300
-		}
-		if c.Indicators.EnableQuantNetflow {
-			quantCharsPerCoin += 300
-		}
-		breakdown.QuantData = (numCoins * quantCharsPerCoin) / 4
-	}
-
-	// --- Ranking Data ---
-	rankingChars := 0
-	if c.Indicators.EnableOIRanking {
-		limit := c.Indicators.OIRankingLimit
-		if limit <= 0 {
-			limit = 10
-		}
-		rankingChars += limit * 60
-	}
-	if c.Indicators.EnableNetFlowRanking {
-		limit := c.Indicators.NetFlowRankingLimit
-		if limit <= 0 {
-			limit = 10
-		}
-		rankingChars += limit * 80
-	}
-	if c.Indicators.EnablePriceRanking {
-		limit := c.Indicators.PriceRankingLimit
-		if limit <= 0 {
-			limit = 10
-		}
-		// Count durations (comma-separated)
-		numDurations := 1
-		if c.Indicators.PriceRankingDuration != "" {
-			numDurations = len(strings.Split(c.Indicators.PriceRankingDuration, ","))
-		}
-		rankingChars += limit * numDurations * 40
-	}
-	breakdown.RankingData = rankingChars / 4
-
 	// --- Total with 15% safety margin ---
-	subtotal := breakdown.SystemPrompt + breakdown.MarketData + breakdown.RankingData + breakdown.QuantData + breakdown.FixedOverhead
+	subtotal := breakdown.SystemPrompt + breakdown.MarketData + breakdown.FixedOverhead
 	total := subtotal * 115 / 100
 
 	// --- Model limits ---
@@ -1543,27 +1171,9 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 
 // getEffectiveCoinCount returns the estimated number of coins that will be analyzed
 func (c *StrategyConfig) getEffectiveCoinCount() int {
-	count := 0
-	switch c.CoinSource.SourceType {
-	case "static":
-		count = len(c.CoinSource.StaticCoins)
-	case "ai500":
-		count = c.CoinSource.AI500Limit
-	case "oi_top":
-		count = c.CoinSource.OITopLimit
-	case "oi_low":
-		count = c.CoinSource.OILowLimit
-	case "hyper_rank":
-		count = c.CoinSource.HyperRankLimit
-	case "vergex_signal":
-		count = c.CoinSource.VergexLimit
-	case "hyper_main":
-		count = c.CoinSource.HyperMainLimit
-	case "hyper_all":
-		count = c.CoinSource.HyperMainLimit
-	default:
-		count = c.CoinSource.HyperRankLimit
-	}
+	// Static lists are the only source; an empty list still implies the
+	// default 3-coin universe at estimation time.
+	count := len(c.CoinSource.StaticCoins)
 	if count <= 0 {
 		count = 3
 	}

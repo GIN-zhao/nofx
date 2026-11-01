@@ -143,11 +143,16 @@ func NewClient(opts ...ClientOption) AIClient {
 		Cfg:        cfg,
 	}
 
-	// 4. Set default Provider (if not set)
+	// 4. Resolve provider defaults: explicit options win, then provider
+	// defaults fill in the base URL and model when left empty.
 	if client.Provider == "" {
 		client.Provider = ProviderDeepSeek
-		client.BaseURL = DefaultDeepSeekBaseURL
-		client.Model = DefaultDeepSeekModel
+	}
+	if client.BaseURL == "" {
+		client.BaseURL = DefaultBaseURLForProvider(client.Provider)
+	}
+	if client.Model == "" {
+		client.Model = DefaultModelForProvider(client.Provider)
 	}
 
 	// 5. Set hooks to point to self

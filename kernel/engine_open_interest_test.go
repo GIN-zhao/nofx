@@ -24,7 +24,6 @@ func TestOpenInterestLiquidityFilter(t *testing.T) {
 		{"threshold is included", "BTCUSDT", &market.OIData{Latest: 300}, 50000, false, false},
 		{"healthy liquidity is included", "BTCUSDT", &market.OIData{Latest: 1000}, 50000, false, false},
 		{"position is retained", "BTCUSDT", &market.OIData{Latest: 1}, 50000, true, false},
-		{"xyz exemption is retained", "xyz:TSLA", &market.OIData{Latest: 0}, 200, false, false},
 		{"missing price cannot determine OI value", "BTCUSDT", &market.OIData{Latest: 1000}, 0, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
