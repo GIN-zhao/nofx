@@ -34,6 +34,14 @@ type Config struct {
 
 	// Market data
 	OKXBaseURL string // OKX public REST base URL
+
+	// Live/demo trading (OKX private REST)
+	TradingMode     string // "paper" (default) or "live"
+	OKXAPIKey       string
+	OKXSecretKey    string
+	OKXPassphrase   string
+	OKXDemo         bool // OKX demo-trading environment
+	OKXCrossMargin  bool // cross margin (default true)
 }
 
 // MustInit initializes global configuration or panics.
@@ -113,6 +121,26 @@ func initConfig() error {
 		cfg.OKXBaseURL = strings.TrimRight(v, "/")
 	}
 
+	// Trading mode: "paper" (default) or "live" (OKX real/demo account).
+	cfg.TradingMode = "paper"
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TRADING_MODE"))); v != "" {
+		cfg.TradingMode = v
+	}
+	if cfg.TradingMode != "paper" && cfg.TradingMode != "live" {
+		return fmt.Errorf("TRADING_MODE 必须是 paper 或 live, 当前为 %q", cfg.TradingMode)
+	}
+	cfg.OKXAPIKey = strings.TrimSpace(os.Getenv("OKX_API_KEY"))
+	cfg.OKXSecretKey = strings.TrimSpace(os.Getenv("OKX_SECRET_KEY"))
+	cfg.OKXPassphrase = strings.TrimSpace(os.Getenv("OKX_PASSPHRASE"))
+	cfg.OKXDemo = envBool("OKX_DEMO")
+	cfg.OKXCrossMargin = !envBool("OKX_ISOLATED")
+
+	if cfg.TradingMode == "live" {
+		if cfg.OKXAPIKey == "" || cfg.OKXSecretKey == "" || cfg.OKXPassphrase == "" {
+			return fmt.Errorf("TRADING_MODE=live 需要 OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE")
+		}
+	}
+
 	if cfg.AIAPIKey == "" {
 		return fmt.Errorf("AI_API_KEY is required (or set the provider key e.g. DEEPSEEK_API_KEY; AI_PROVIDER=%s)", cfg.AIProvider)
 	}
@@ -127,4 +155,13 @@ func Get() *Config {
 		Init()
 	}
 	return global
+}
+
+// envBool reports whether the env var is set to a truthy value ("1"/"true"/"yes"/"y"/"on").
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	}
+	return false
 }

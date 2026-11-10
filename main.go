@@ -16,7 +16,9 @@ import (
 	"nofx/security"
 	"nofx/store"
 	"nofx/trader"
+	"nofx/trader/okxlive"
 	"nofx/trader/paper"
+	"nofx/trader/types"
 
 	// Register protocol-specific providers (claude = Anthropic Messages API, …)
 	_ "nofx/mcp/provider"
@@ -94,8 +96,31 @@ func main() {
 	}
 	logger.Infof("✅ AI client ready: provider=%s model=%s", cfg.AIProvider, cfg.AIModel)
 
-	// Paper broker + Telegram notifier + auto trader
-	broker := paper.New(st, paperTraderID)
+	// Broker selection: paper ledger (default) or OKX live/demo account.
+	var broker types.Trader
+	switch cfg.TradingMode {
+	case "live":
+		liveBroker, err := okxlive.New(okxlive.Config{
+			APIKey:      cfg.OKXAPIKey,
+			SecretKey:   cfg.OKXSecretKey,
+			Passphrase:  cfg.OKXPassphrase,
+			BaseURL:     cfg.OKXBaseURL,
+			Demo:        cfg.OKXDemo,
+			CrossMargin: cfg.OKXCrossMargin,
+		})
+		if err != nil {
+			logger.Fatalf("❌ Failed to connect OKX account: %v", err)
+		}
+		broker = liveBroker
+		if cfg.OKXDemo {
+			logger.Warnf("🎮 TRADING_MODE=live + OKX_DEMO=1 — OKX 模拟盘（demo trading），不涉及真实资金")
+		} else {
+			logger.Warnf("🚨 TRADING_MODE=live — 连接的是 OKX 实盘账户，所有开平仓均为真实交易！")
+		}
+	default:
+		broker = paper.New(st, paperTraderID)
+	}
+
 	notifier := notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID)
 	if !notifier.Enabled() {
 		logger.Warnf("⚠️ TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — notifications disabled")

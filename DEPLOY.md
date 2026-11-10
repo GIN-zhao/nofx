@@ -84,7 +84,32 @@ TELEGRAM_CHAT_ID=<你的数字 chat id>
 | `SCAN_INTERVAL` | 决策周期秒数（最小 30） | `300` |
 | `OKX_BASE_URL` | OKX 公开 REST 地址 | `https://www.okx.com` |
 
-### 3.4 代理（国内服务器必看）
+### 3.4 OKX 实盘 / demo 交易（可选，默认关闭）
+
+默认 `TRADING_MODE=paper`（本地模拟账本）。要连真实 OKX 账户：
+
+```bash
+TRADING_MODE=live
+OKX_API_KEY=<OKX 网页「API 管理」创建，权限勾选「交易」>
+OKX_SECRET_KEY=<创建时只显示一次>
+OKX_PASSPHRASE=<创建 API key 时自己设置的口令>
+OKX_DEMO=1          # 强烈建议先设 1 走 OKX 模拟盘，验证无误后再改 0 上实盘
+OKX_ISOLATED=0      # 0 = 全仓（默认），1 = 逐仓
+```
+
+行为说明：
+
+- **账户要求**：broker 会检查账户持仓模式，若是单向持仓会尝试自动切换为
+  双向持仓 (long_short_mode)；账户有持仓/挂单时切换会失败，需先平掉或手动切换。
+- **SL/TP**：以 OKX 策略委托单（algo order）挂在交易所侧，机器人宕机也能触发。
+- **服务端平仓检测**：止损/止盈/爆仓/手动平仓（OKX 网页操作）都会被轮询
+  positions-history 发现并推送 Telegram。
+- **账本**：`TRADING_MODE=live` 时 SQLite 仍记录决策与权益快照，但真实持仓
+  以 OKX 账户为准；`INITIAL_BALANCE` 只影响 paper 模式。
+- **风控提示**：`OKX_DEMO=0` 时所有开平仓都是真实资金，启动日志会打印醒目
+  警告，请确认风控参数（最大持仓数、仓位占比）后再上实盘。
+
+### 3.5 代理（国内服务器必看）
 
 ```bash
 PROXY_URL=http://127.0.0.1:7897   # Clash/V2Ray 混合端口
@@ -183,5 +208,8 @@ mv nofx-new nofx && nohup ./nofx > nofx.log 2>&1 &
 | `telegram getUpdates failed: ... unexpected EOF` | 代理长连接偶发抖动，程序每 3 秒自动重试，偶发无需处理；持续出现按上一条处理 |
 | Telegram 发消息不回复 | 确认发消息的账号 chat_id 与 `TELEGRAM_CHAT_ID` 一致；确认进程存活（`pgrep nofx`）；重启后会补收 24h 内消息 |
 | 决策周期连续失败 | 连续 3 次失败进入安全模式并推送告警；恢复后自动退出安全模式。期间 SL/TP/爆仓检查照常执行，持仓仍受保护 |
+| live 启动报 `50113  该服务需完成验证` / 签名错误 | 检查 OKX_API_KEY/SECRET/PASSPHRASE 是否复制完整（SECRET 只在创建时显示）；确认 IP 白名单包含服务器 IP |
+| live 切换双向持仓失败 | 账户存在持仓或挂单，先在 OKX 网页平掉，或手动把持仓模式切为「双向持仓」后重启 |
+| live 开仓被拒 `仓位不足最小下单量` | 仓位金额按 `1/杠杆` 折算后低于该币种最小合约张数（如 BTC 一张 = 0.01 BTC），调大最小仓位金额或杠杆 |
 | 开仓被拒 | 见日志：最低仓位、最大持仓数、仓位占比上限、SL/TP 方向校验均为风控硬约束，属预期行为 |
 | 日志出现乱码/截断 | 多为多进程写同一日志文件所致，重启时换一个日志文件名 |
