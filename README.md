@@ -23,6 +23,8 @@ go build -o nofx .
 
 默认候选币种 BTC / ETH / SOL，每 300 秒一个决策周期（`SCAN_INTERVAL` 可调，最小 30s），初始本金 1000 USDT（`INITIAL_BALANCE`）。
 
+服务器部署、进程管理（systemd）、AI provider 协议选择与代理配置的完整说明见 [DEPLOY.md](DEPLOY.md)。
+
 ## 环境变量
 
 | 变量 | 说明 | 默认 |
