@@ -86,6 +86,8 @@ TELEGRAM_CHAT_ID=<你的数字 chat id>
 
 ### 3.4 OKX 实盘 / demo 交易（可选，默认关闭）
 
+> 完整的行为说明、安全机制与上实盘检查清单见 [LIVE.md](LIVE.md)（`live-trading` 分支）。
+
 默认 `TRADING_MODE=paper`（本地模拟账本）。要连真实 OKX 账户：
 
 ```bash

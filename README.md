@@ -1,13 +1,13 @@
-# NOFX — OKX 行情 + AI 决策 + 本地模拟交易 + Telegram 推送
+# NOFX — OKX 行情 + AI 决策 + 模拟/实盘交易 + Telegram 推送
 
-精简版 NOFX：只用 OKX 公开行情（无需交易所 API key），由大模型做交易决策，在本地 SQLite 账本上模拟交易，并通过 Telegram bot 推送每笔交易的详细信息。
+精简版 NOFX：只用 OKX 公开行情，由大模型做交易决策，并通过 Telegram bot 推送每笔交易的详细信息。默认在本地 SQLite 账本上模拟交易（无需交易所 API key）；`TRADING_MODE=live` 可直连 OKX 真实/模拟账户执行真实交易（详见 [LIVE.md](LIVE.md)）。
 
-已移除：钱包/交易所实盘连接、Web 前端、多交易所适配、网格策略等冗余模块。
+已移除：Web 前端、多交易所适配、网格策略等冗余模块。
 
 ## 功能
 
 - **OKX 实时行情**：USDT 永续合约 K 线（多周期）、EMA/MACD/RSI/ATR/BOLL、持仓量、资金费率，全部来自 OKX v5 公开 REST。
-- **双交易模式**：默认本地模拟盘；`TRADING_MODE=live` 可直连 OKX 真实/模拟（demo）账户（USDT 永续、双向持仓），SL/TP 挂交易所侧策略委托，服务端平仓（止损/止盈/爆仓/手动）自动检测并推送。详见 [DEPLOY.md](DEPLOY.md) §3.4。
+- **双交易模式**：默认本地模拟盘；`TRADING_MODE=live` 可直连 OKX 真实/模拟（demo）账户（USDT 永续、双向持仓），SL/TP 挂交易所侧策略委托，服务端平仓（止损/止盈/爆仓/手动）自动检测并推送。详见 [LIVE.md](LIVE.md)。
 - **AI 决策**：将行情 + 账户 + 持仓 + 历史交易统计组装进 prompt，由配置的 LLM 输出结构化决策（开多/开空/平仓/持有，含止损、止盈、杠杆、仓位大小、信心度）。
 - **本地模拟交易**：SQLite 账本（trader/positions/orders/equity 表），市价即时成交，0.05% taker 手续费，强制止损/止盈，按 `1/杠杆` 估算爆仓价，重启后账本自动恢复。
 - **Telegram 推送**：开仓/平仓消息包含策略、币种现价与 1h/4h 涨跌（市场走向）、本金（保证金）、杠杆、仓位价值、止损止盈、信心度和 AI 分析；触发止损/止盈/爆仓也会推送。连续 3 次周期失败自动进入安全模式并推送告警。
@@ -38,7 +38,13 @@ go build -o nofx .
 | `TELEGRAM_CHAT_ID` | 目标 chat id | 空（禁用推送） |
 | `INITIAL_BALANCE` | 初始本金 USDT（仅首次建账生效） | `1000` |
 | `SCAN_INTERVAL` | 决策周期秒数 | `300` |
-| `OKX_BASE_URL` | OKX 公开 REST 地址 | `https://www.okx.com` |
+| `OKX_BASE_URL` | OKX REST 地址（公开行情 + 私有交易） | `https://www.okx.com` |
+| `TRADING_MODE` | `paper` 本地模拟 / `live` OKX 真实账户 | `paper` |
+| `OKX_API_KEY` | OKX API key（仅 live；权限只需「交易」） | 空 |
+| `OKX_SECRET_KEY` | OKX secret key（仅 live） | 空 |
+| `OKX_PASSPHRASE` | OKX API 口令（仅 live） | 空 |
+| `OKX_DEMO` | `1` OKX 模拟盘 / `0` 实盘（仅 live） | `0` |
+| `OKX_ISOLATED` | `1` 逐仓 / `0` 全仓（仅 live） | `0` |
 
 ## 交易周期流程
 
